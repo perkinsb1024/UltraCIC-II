@@ -1,0 +1,141 @@
+--- online/UltraCIC/UltraCIC.asm	2015-02-18 21:07:10.000000000 +0100
++++ UltraCIC_fix.asm	2015-10-30 16:48:58.893381510 +0100
+@@ -1,56 +1,10 @@
+-/*
+-UltraCIC.asm
+-N64 CIC clone!
+-ATtiny25
+-
+-Author: jesgdev
+-Credits:
+-	ccsfp221-kammerstetter.pdf - Thanks to those authors!
+-	KRIKzz - 710x dumps and testing.
+-
+-Pinout(references(direct, pad,  etc..) refer to the CIC footprint on a typical cart board).
+-1: Reset, this is the actual /RST pin of AVR.  Pad is VCC so need to cut or lift.  Jump to 9(cic pinout)
+-2: CLKIN, unused pad, jumper to 11(cic pinout), cart edge #19
+-3: ??, unused pad  TODO: Use this pin to read in the CIC_TYPE
+-4: GND, unused pad, jump to nearby pad(last 3 in row are GND)
+-5: CICPIN2_2, direct, tied to GND(always?)
+-6: CICPIN2_1, direct, cart edge #43 (Data Clock)
+-7: CICPIN2_0, direct, cart edge #18 (Data I/O)
+-8: VCC, direct
+-
+-1 cic clock = 2 AVR clocks.  Clocks given in code are avr clocks.
+-
+-Programming the AVR:
+-Fuses:
+-/Reset enabled
+-Disable debug wire
+-disable watchdog
+-disable bod(probably doesn't matter?)
+-No clock div(default is div8, make sure to disable!)
+-Fastest startup, external clock
+-SUT=00
+-CKSEL=0000
+-
+-
+-CIC_TYPE:
+-4bit value to select cic type.
+-bit3=region
+-	0: 610x mode
+-	1: 710x mode
+-bit2=x105 mode(6105/7105).
+-	0: not x105(use bit1:0 for cic type)
+-	1: 6105/7105
+-bit1:0
+-	00: 6102/7101
+-	01: 6103/7103
+-	10: 6106/7106
+-	11: 6101/7102
+-*/
++
++.include "/usr/share/avra/includes/tn45def.inc"
+ 
+ ;------------------------------------------------
+ ;Choose CIC_TYPE(pick one):
+ ;------------------------------------------------
+-.equ CIC_TYPE=0b0000	;6102
++;.equ CIC_TYPE=0b0000	;6102
+ ;.equ CIC_TYPE=0b0001	;6103
+ ;.equ CIC_TYPE=0b0010	;6106
+ ;.equ CIC_TYPE=0b0011	;6101
+@@ -58,7 +12,7 @@
+ ;.equ CIC_TYPE=0b0101	;6105
+ ;.equ CIC_TYPE=0b0110	;6105
+ ;.equ CIC_TYPE=0b0111	;6105
+-;.equ CIC_TYPE=0b1000	;7101
++.equ CIC_TYPE=0b1000	;7101
+ ;.equ CIC_TYPE=0b1001	;7103
+ ;.equ CIC_TYPE=0b1010	;7106
+ ;.equ CIC_TYPE=0b1011	;7102
+@@ -90,6 +44,7 @@
+ .equ CICPIN0=PINB2		;cic port2 pin0
+ .equ CICPIN1=PINB1		;cic port2 pin1
+ .equ CICPIN2=PINB0		;cic port2 pin2
++.equ CICPIN3=PINB4		;cic port2 pin3 ;switch pin
+ 
+ ;Flags(bit location of flag in flags register,  do not change these values)
+ .equ FLAG_x105_MODE=0			;0=x10x, 1=x105
+@@ -112,7 +67,8 @@
+ 	out PRR, scr0			;power reduction
+ 	ldi scr0, 0x80
+ 	out ACSR, scr0			;comparator disable
+-	ldi scr0, LOW(RAMEND)	;STACK!  Make sure SPH is not needed for the part
++;	ldi scr0, LOW(RAMEND)	;STACK!  Make sure SPH is not needed for the part
++	ldi scr0, 0xDF	;STACK! attiny25 offset when using tn45def.inc
+ 	out SPL, scr0
+ 	nop
+ 	nop
+@@ -146,10 +102,11 @@
+ 	;66 ticks elasped
+ 	
+ 	;setup flags and key address
+-	andi scr0, 0x0F
+-	sbrc scr0, 3
++	andi scr0, 0x0F
++	;sbrc scr0, 3 ;deactive old config check - saturnu
++	sbis CICPINS, CICPIN3 ; replace with a pal/ntsc switch - saturnu
+ 	sbr flags, (1 << FLAG_710x_MODE)
+-	sbrc scr0, 2
++	;sbrc scr0, 2 ; mix up cic6102 with x105 mode - saturnu
+ 	sbr flags, (1 << FLAG_x105_MODE)
+     andi scr0, 0x07
+ 	lsl scr0
+@@ -261,24 +218,6 @@
+ 
+ 	;06:00 - 06:1A(392clk)
+ cic_ram_init:
+-	/*
+-	0:0 = Leftover counter value, probably not important
+-	0:1 = ??, will be provided by console
+-	0:2-0:F = Seed from 04:00 area(PAT instruction) LSB
+-	1:0 = Unitialized
+-	1:1 = Set to 0xB but will be provided by console
+-	1:2-1:F = Seed from 04:00 area(PAT instruction) MSB
+-	2:0-3:F = Unitialized(will be set to zero)
+-	RAM(610x): E09A185A13E10DEC
+-			   0B14F8B57CD61E98
+-		       0000000000000000
+-		       0000000000000000
+-			   
+-	RAM(710x): E04F51217198575A
+-			   0B123F827198115C
+-			   0000000000000000
+-		       0000000000000000
+-	*/
+ 	sbrc flags, FLAG_710x_MODE
+ 	rjmp cic_ram_init_710x
+ 	ldi ZH, HIGH(CIC_INITIAL_RAM_610x * 2)
+@@ -305,7 +244,6 @@
+ 	nop
+ 	nop
+ 	
+-	//06:1B - 06:21(14clk)
+ cic_ram_init_2:
+ 	nop
+ 	rcall m0200
+@@ -944,4 +882,4 @@
+ 	
+ CIC_INITIAL_RAM_710x:
+ 	.dw 0x4FE0, 0x2151, 0x9871, 0x5A57, 0x120B, 0x823F, 0x9871, 0x5C11
